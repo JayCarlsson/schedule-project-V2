@@ -1,0 +1,10 @@
+{
+  "name": "schedule-scraper",
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "puppeteer": "^24.34.0"
+  }
+}

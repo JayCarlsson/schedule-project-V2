@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Schedule Viewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <h1>Schedule Viewer</h1>
+  <input id="url" placeholder="Schedule URL">
+  <input id="id" placeholder="Employee ID">
+  <div class="toggle">
+    <button id="calBtn" class="active">Calendar</button>
+    <button id="dayBtn">Daily</button>
+  </div>
+  <button id="loadBtn">Load Schedule</button>
+  <div id="loading" class="hidden">Loading...</div>
+  <div id="calendar" class="calendar"></div>
+  <div id="daily" class="daily hidden"></div>
+<!-- Tooltip container -->
+<div id="tooltip"></div>
+
+<!-- Your existing script include -->
+<script src="script.js"></script>
+</body>
+</html>
