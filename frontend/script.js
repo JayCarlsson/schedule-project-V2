@@ -21,7 +21,13 @@ let countdownInterval = null;
 let lastSchedule      = [];
 let activeHistoryId   = null;
 
-// ── Persist inputs in URL hash ───────────────────────────────────────
+// ── Date helper: parse YYYY-MM-DD in LOCAL time (avoids UTC-offset month bucketing) ──
+function parseLocal(str) {
+  const [y, m, d] = str.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+// ── Persist inputs in URL hash ──────────────────────────────────────
 function saveInputs() {
   const url = urlInput.value.trim(), id = idInput.value.trim();
   if (url || id) history.replaceState(null, '', '#' + btoa(JSON.stringify({ url, id })));
@@ -33,7 +39,7 @@ restoreInputs();
 urlInput.addEventListener('input', saveInputs);
 idInput.addEventListener('input',  saveInputs);
 
-// ── localStorage history ─────────────────────────────────────────────────
+// ── localStorage history ────────────────────────────────────────────────
 const STORAGE_KEY = 'sv-history';
 
 function loadStoredHistory() {
@@ -45,7 +51,7 @@ function deriveLabel(schedule) {
   if (!schedule?.length) return 'Unknown';
   const seen = new Set();
   schedule.forEach(e => {
-    const d = new Date(e.date);
+    const d = parseLocal(e.date);
     seen.add(`${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`);
   });
   return [...seen].join(' & ');
@@ -89,7 +95,6 @@ function displayHistoryEntry(entry) {
   legendMap    = entry.legend  || {};
   lastSchedule = entry.schedule || [];
   activeHistoryId = entry.id;
-  // Clear containers BEFORE rendering to prevent duplicate months
   calendarContainer.innerHTML = '';
   dailyContainer.innerHTML    = '';
   statsBar.innerHTML          = '';
@@ -118,7 +123,6 @@ function renderHistory() {
   }).join('');
 }
 
-// Delegate click events on history list
 historyList.addEventListener('click', e => {
   const delBtn = e.target.closest('[data-del]');
   if (delBtn) { e.stopPropagation(); deleteFromHistory(delBtn.dataset.del); return; }
@@ -133,7 +137,6 @@ clearHistoryBtn.addEventListener('click', () => {
   if (confirm('Remove all saved schedules?')) clearHistory();
 });
 
-// Init: render history on page load, and auto-load most recent if any
 (function init() {
   const items = loadStoredHistory();
   if (items.length) {
@@ -213,7 +216,7 @@ const MONTH_NAMES=['January','February','March','April','May','June','July','Aug
 function computeStats(schedule){
   const months={};
   for(const entry of schedule){
-    const d=new Date(entry.date),key=`${d.getFullYear()}-${d.getMonth()}`;
+    const d=parseLocal(entry.date),key=`${d.getFullYear()}-${d.getMonth()}`;
     const lbl=`${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
     if(!months[key])months[key]={label:lbl,totalMins:0,shiftDays:0,leaveDays:0,unknownShifts:0};
     const m=months[key],jsDay=d.getDay();
@@ -253,7 +256,7 @@ function exportIcs(schedule){
   const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Schedule Viewer//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
   let uid=1;
   for(const entry of schedule){
-    const date=new Date(entry.date),jsDay=date.getDay();
+    const date=parseLocal(entry.date),jsDay=date.getDay();
     const realShifts=entry.shifts.filter(s=>s.toUpperCase()!=='X');
     if(!realShifts.length)continue;
     for(const code of realShifts){
@@ -281,7 +284,7 @@ function renderNextShiftBanner(schedule){
   const now=new Date(),today=new Date(now);today.setHours(0,0,0,0);
   let nextEntry=null,nextShiftCode=null,nextShiftTime=null,nextDate=null;
   for(const entry of schedule){
-    const d=new Date(entry.date);
+    const d=parseLocal(entry.date);
     if(d<today)continue;
     const jsDay=d.getDay(),realShifts=entry.shifts.filter(s=>s.toUpperCase()!=='X');
     if(!realShifts.length)continue;
@@ -294,8 +297,8 @@ function renderNextShiftBanner(schedule){
     if(nextEntry)break;
   }
   if(!nextEntry){nextShiftBanner.classList.add('hidden');return;}
-  const jsDay=new Date(nextEntry.date).getDay(),info=getShiftInfoForDay(nextShiftCode,jsDay);
-  const isToday=new Date(nextEntry.date).setHours(0,0,0,0)===today.getTime();
+  const jsDay=parseLocal(nextEntry.date).getDay(),info=getShiftInfoForDay(nextShiftCode,jsDay);
+  const isToday=parseLocal(nextEntry.date).getTime()===today.getTime();
   nextShiftBanner.className='next-shift-banner'+(isToday?' nsb-today':'');
   function updateBanner(){
     const diff=nextDate-new Date();
@@ -310,7 +313,7 @@ function renderNextShiftBanner(schedule){
   countdownInterval=setInterval(updateBanner,30000);
 }
 
-// ── Tooltip HTML ─────────────────────────────────────────────────────────────
+// ── Tooltip HTML ────────────────────────────────────────────────────────────
 function buildShiftHTML(code,jsDay){
   if(code.toUpperCase()==='X')return `<div class="tt-entry tt-leave-entry"><span class="tt-leave-label">Beviljad ledighet</span></div>`;
   if(!legendMap[code])return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
@@ -320,12 +323,12 @@ function buildShiftHTML(code,jsDay){
   return `<div class="tt-entry"><div class="tt-name">${info.name} <span class="tt-code-tag">${code}</span></div>${labelsHTML?`<div class="tt-labels">${labelsHTML}</div>`:''} ${info.time?`<div class="tt-time">${info.time}</div>`:''}</div>`;
 }
 
-// ── View toggle ──────────────────────────────────────────────────────────────
+// ── View toggle ─────────────────────────────────────────────────────────────
 function switchView(view){const cal=view==='calendar';calBtn.classList.toggle('active',cal);calBtn.setAttribute('aria-pressed',cal);dayBtn.classList.toggle('active',!cal);dayBtn.setAttribute('aria-pressed',!cal);calendarContainer.classList.toggle('hidden',!cal);dailyContainer.classList.toggle('hidden',cal);}
 calBtn.addEventListener('click',()=>switchView('calendar'));
 dayBtn.addEventListener('click',()=>switchView('daily'));
 
-// ── Load schedule (fetch + save) ──────────────────────────────────────────────
+// ── Load schedule (fetch + save) ─────────────────────────────────────────────
 loadBtn.addEventListener('click',async()=>{
   const url=urlInput.value.trim(),id=idInput.value.trim();
   if(!url||!id){showError('Please enter both a schedule URL and your Employee ID.');return;}
@@ -354,7 +357,7 @@ loadBtn.addEventListener('click',async()=>{
   }
 });
 
-// ── Calendar view ─────────────────────────────────────────────────────────────
+// ── Calendar view ────────────────────────────────────────────────────────────
 const DAY_NAMES=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 function renderCalendar(schedule){
   calendarContainer.innerHTML = '';
@@ -362,7 +365,7 @@ function renderCalendar(schedule){
   const shiftMap={},monthGroups={};
   schedule.forEach(e=>{
     shiftMap[e.date]=e.shifts;
-    const d=new Date(e.date),key=`${d.getFullYear()}-${d.getMonth()}`;
+    const d=parseLocal(e.date),key=`${d.getFullYear()}-${d.getMonth()}`;
     if(!monthGroups[key])monthGroups[key]={year:d.getFullYear(),month:d.getMonth()};
   });
   const today=new Date();today.setHours(0,0,0,0);
@@ -395,14 +398,14 @@ function renderCalendar(schedule){
 }
 function moveTooltip(e){const pad=16,tw=tooltip.offsetWidth||220,th=tooltip.offsetHeight||80,x=e.clientX+pad,y=e.clientY-10;tooltip.style.left=(x+tw>window.innerWidth?e.clientX-tw-pad:x)+'px';tooltip.style.top=(y+th>window.innerHeight?e.clientY-th-pad:y)+'px';}
 
-// ── Daily list view ────────────────────────────────────────────────────────────
+// ── Daily list view ───────────────────────────────────────────────────────────
 const FULL_DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function renderDaily(schedule){
   dailyContainer.innerHTML = '';
   if(!schedule?.length){dailyContainer.innerHTML="<p class='empty-state'>No shifts found.</p>";return;}
   const today=new Date();today.setHours(0,0,0,0);
   schedule.forEach(entry=>{
-    const date=new Date(entry.date),jsDay=date.getDay();
+    const date=parseLocal(entry.date),jsDay=date.getDay();
     const isXOnly=entry.shifts.length===1&&entry.shifts[0].toUpperCase()==='X';
     const item=document.createElement('div');
     item.className='daily-item'+(isXOnly?' leave':'')+(date.getTime()===today.getTime()?' today':'');
@@ -418,7 +421,7 @@ function renderDaily(schedule){
   });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 function toDateStr(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function showError(msg){errorMsg.textContent=msg;errorMsg.classList.remove('hidden');}
 function hideError(){errorMsg.classList.add('hidden');errorMsg.textContent='';}
