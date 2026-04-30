@@ -49,9 +49,15 @@
   <div id="next-shift-banner" class="next-shift-banner hidden"></div>
 
   <div id="schedule-section" class="hidden">
-    <div class="view-toggle">
-      <button id="calBtn" class="toggle-btn active" aria-pressed="true">Calendar</button>
-      <button id="dayBtn" class="toggle-btn" aria-pressed="false">Daily List</button>
+    <div class="view-toolbar">
+      <div class="view-toggle">
+        <button id="calBtn" class="toggle-btn active" aria-pressed="true">Calendar</button>
+        <button id="dayBtn" class="toggle-btn" aria-pressed="false">Daily List</button>
+      </div>
+      <button id="exportBtn" class="btn-export" title="Download as .ics calendar file">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export .ics
+      </button>
     </div>
 
     <div id="calendar" class="calendar-wrapper"></div>

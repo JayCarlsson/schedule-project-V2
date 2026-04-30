@@ -92,13 +92,22 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-di
 /* ── Hidden util ────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 
-/* ── View toggle ────────────────────────────────────────────────────────────── */
-.view-toggle { display: flex; gap: .5rem; margin-bottom: 1.25rem; }
+/* ── View toolbar (toggle + export) ─────────────────────────────────────────── */
+.view-toolbar { display: flex; align-items: center; justify-content: space-between;
+                flex-wrap: wrap; gap: .5rem; margin-bottom: 1.25rem; }
+.view-toggle { display: flex; gap: .5rem; }
 .toggle-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-muted);
               border-radius: var(--radius-sm); padding: .45rem 1rem; font-size: .875rem;
               font-weight: 500; cursor: pointer; transition: all .18s; }
 .toggle-btn:hover  { border-color: var(--accent); color: var(--text); }
 .toggle-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+.btn-export { display: inline-flex; align-items: center; gap: .4rem;
+              background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+              border-radius: var(--radius-sm); padding: .45rem .9rem; font-size: .8rem;
+              font-weight: 500; cursor: pointer; transition: all .18s; }
+.btn-export:hover { border-color: var(--green); color: var(--green); }
+.btn-export:active { transform: scale(.97); }
 
 /* ── Calendar ───────────────────────────────────────────────────────────────── */
 .month-header { font-size: 1rem; font-weight: 700; color: var(--text); margin: 1.5rem 0 .6rem;
@@ -182,4 +191,5 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-di
   .daily-item { flex-direction: column; gap: .4rem; }
   .daily-date { min-width: unset; }
   .next-shift-banner { flex-wrap: wrap; }
+  .view-toolbar { flex-direction: column; align-items: flex-start; }
 }
