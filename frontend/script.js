@@ -1,26 +1,29 @@
-const loadBtn           = document.getElementById("loadBtn");
-const loading           = document.getElementById("loading");
-const errorMsg          = document.getElementById("error-msg");
-const scheduleSection   = document.getElementById("schedule-section");
-const calendarContainer = document.getElementById("calendar");
-const dailyContainer    = document.getElementById("daily");
-const calBtn            = document.getElementById("calBtn");
-const dayBtn            = document.getElementById("dayBtn");
-const exportBtn         = document.getElementById("exportBtn");
-const tooltip           = document.getElementById("tooltip");
-const nextShiftBanner   = document.getElementById("next-shift-banner");
-const statsBar          = document.getElementById("stats-bar");
-const urlInput          = document.getElementById("url");
-const idInput           = document.getElementById("id");
+const loadBtn           = document.getElementById('loadBtn');
+const loading           = document.getElementById('loading');
+const errorMsg          = document.getElementById('error-msg');
+const scheduleSection   = document.getElementById('schedule-section');
+const calendarContainer = document.getElementById('calendar');
+const dailyContainer    = document.getElementById('daily');
+const calBtn            = document.getElementById('calBtn');
+const dayBtn            = document.getElementById('dayBtn');
+const exportBtn         = document.getElementById('exportBtn');
+const tooltip           = document.getElementById('tooltip');
+const nextShiftBanner   = document.getElementById('next-shift-banner');
+const statsBar          = document.getElementById('stats-bar');
+const historySection    = document.getElementById('history-section');
+const historyList       = document.getElementById('history-list');
+const clearHistoryBtn   = document.getElementById('clearHistoryBtn');
+const urlInput          = document.getElementById('url');
+const idInput           = document.getElementById('id');
 
 let legendMap         = {};
 let countdownInterval = null;
 let lastSchedule      = [];
+let activeHistoryId   = null;
 
-// ── Persist inputs in URL hash ────────────────────────────────────────────────
+// ── Persist inputs in URL hash ───────────────────────────────────────
 function saveInputs() {
-  const url = urlInput.value.trim();
-  const id  = idInput.value.trim();
+  const url = urlInput.value.trim(), id = idInput.value.trim();
   if (url || id) history.replaceState(null, '', '#' + btoa(JSON.stringify({ url, id })));
 }
 function restoreInputs() {
@@ -30,7 +33,115 @@ restoreInputs();
 urlInput.addEventListener('input', saveInputs);
 idInput.addEventListener('input',  saveInputs);
 
-// ── Swedish day name → JS getDay() ───────────────────────────────────────────
+// ── localStorage history ─────────────────────────────────────────────────
+const STORAGE_KEY = 'sv-history';
+
+function loadStoredHistory() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+  catch { return []; }
+}
+
+function deriveLabel(schedule) {
+  if (!schedule?.length) return 'Unknown';
+  const seen = new Set();
+  schedule.forEach(e => {
+    const d = new Date(e.date);
+    seen.add(`${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`);
+  });
+  return [...seen].join(' & ');
+}
+
+function saveToHistory(data) {
+  const label = deriveLabel(data.schedule);
+  const id    = label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const prev  = loadStoredHistory().filter(h => h.id !== id);
+  const entry = { id, label, savedAt: Date.now(), schedule: data.schedule, legend: data.legend };
+  prev.unshift(entry);
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prev.slice(0, 24))); } catch {}
+  activeHistoryId = id;
+  renderHistory();
+}
+
+function deleteFromHistory(id) {
+  const updated = loadStoredHistory().filter(h => h.id !== id);
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); } catch {}
+  if (activeHistoryId === id) {
+    // If we just deleted the active one, load the next available or hide
+    if (updated.length) {
+      displayHistoryEntry(updated[0]);
+    } else {
+      scheduleSection.classList.add('hidden');
+      nextShiftBanner.classList.add('hidden');
+      activeHistoryId = null;
+    }
+  }
+  renderHistory();
+}
+
+function clearHistory() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  activeHistoryId = null;
+  scheduleSection.classList.add('hidden');
+  nextShiftBanner.classList.add('hidden');
+  renderHistory();
+}
+
+function displayHistoryEntry(entry) {
+  legendMap    = entry.legend  || {};
+  lastSchedule = entry.schedule || [];
+  activeHistoryId = entry.id;
+  renderHistory();
+  renderStats(lastSchedule);
+  renderCalendar(lastSchedule);
+  renderDaily(lastSchedule);
+  renderNextShiftBanner(lastSchedule);
+  scheduleSection.classList.remove('hidden');
+}
+
+function renderHistory() {
+  const items = loadStoredHistory();
+  if (!items.length) { historySection.classList.add('hidden'); return; }
+  historySection.classList.remove('hidden');
+  historyList.innerHTML = items.map(h => {
+    const isActive = h.id === activeHistoryId;
+    const saved = new Date(h.savedAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+    return `<div class="history-chip${isActive ? ' active' : ''}" data-id="${h.id}" title="Saved ${saved}">
+      <span class="history-chip-label">${h.label}</span>
+      <span class="history-chip-date">${saved}</span>
+      <button class="history-chip-del" data-del="${h.id}" aria-label="Remove ${h.label}">
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="1" y1="1" x2="11" y2="11"/><line x1="11" y1="1" x2="1" y2="11"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+}
+
+// Delegate click events on history list
+historyList.addEventListener('click', e => {
+  // Delete button
+  const delBtn = e.target.closest('[data-del]');
+  if (delBtn) { e.stopPropagation(); deleteFromHistory(delBtn.dataset.del); return; }
+  // Chip itself
+  const chip = e.target.closest('[data-id]');
+  if (chip) {
+    const entry = loadStoredHistory().find(h => h.id === chip.dataset.id);
+    if (entry) displayHistoryEntry(entry);
+  }
+});
+
+clearHistoryBtn.addEventListener('click', () => {
+  if (confirm('Remove all saved schedules?')) clearHistory();
+});
+
+// Init: render history on page load, and auto-load most recent if any
+(function init() {
+  const items = loadStoredHistory();
+  if (items.length) {
+    renderHistory();
+    displayHistoryEntry(items[0]);
+  }
+})();
+
+// ── Swedish day name → JS getDay() ──────────────────────────────────────
 const SV_DAYS = { 'sön':0,'son':0,'mån':1,'man':1,'tis':2,'ons':3,'tor':4,'tors':4,'fre':5,'lör':6,'lor':6 };
 function svDay(n) { return SV_DAYS[n.trim().toLowerCase()]; }
 function dayMatchesSingle(jsDay, n) { const v=svDay(n); return v!==undefined&&v===jsDay; }
@@ -63,127 +174,94 @@ function cleanTime(t) { return t.split(/\s+\(/)[0].trim(); }
 function matchTimeForDay(timesStr, jsDay) {
   for (const part of splitTimeParts(timesStr)) {
     const ci=part.indexOf(':');
-    if (ci===-1) { if (/^\d/.test(part)) return cleanTime(part); continue; }
-    const dayPart=part.substring(0,ci).trim(), timePart=part.substring(ci+1).trim();
-    if (/^\d/.test(dayPart)) return cleanTime(timePart);
-    if (dayMatchesSpec(jsDay,dayPart)) return cleanTime(timePart);
+    if (ci===-1){if(/^\d/.test(part))return cleanTime(part);continue;}
+    const dayPart=part.substring(0,ci).trim(),timePart=part.substring(ci+1).trim();
+    if(/^\d/.test(dayPart))return cleanTime(timePart);
+    if(dayMatchesSpec(jsDay,dayPart))return cleanTime(timePart);
   }
   return null;
 }
-const GAME_RE = /^(roulette|kontanter|bj|blackjack|poker)/i;
-function extractLabels(timesStr) {
+const GAME_RE=/^(roulette|kontanter|bj|blackjack|poker)/i;
+function extractLabels(timesStr){
   return splitTimeParts(timesStr).filter(p=>p.indexOf(':')===-1&&!/^\d/.test(p)&&GAME_RE.test(p));
 }
-function getShiftInfoForDay(code, jsDay) {
+function getShiftInfoForDay(code,jsDay){
   const entries=legendMap[code];
-  if (!entries?.length) return null;
-  for (const entry of entries) {
-    const time=matchTimeForDay(entry.times,jsDay);
-    if (time!==null) return { name:entry.name, time, labels:extractLabels(entry.times) };
-  }
-  return { name:entries[0].name, time:'', labels:extractLabels(entries[0].times) };
+  if(!entries?.length)return null;
+  for(const entry of entries){const time=matchTimeForDay(entry.times,jsDay);if(time!==null)return{name:entry.name,time,labels:extractLabels(entry.times)};}
+  return{name:entries[0].name,time:'',labels:extractLabels(entries[0].times)};
 }
 
-// ── Time helpers ───────────────────────────────────────────────────────────────
-function pad2(n) { return String(n).padStart(2,'0'); }
-function parseTimeRange(timeStr) {
-  if (!timeStr) return null;
+// ── Time helpers ───────────────────────────────────────────────────────────
+function pad2(n){return String(n).padStart(2,'0');}
+function parseTimeRange(timeStr){
+  if(!timeStr)return null;
   const m=timeStr.match(/(\d{1,2})[.:](\d{2})\s*[-–]\s*(\d{1,2})[.:](\d{2})/);
-  return m ? { sh:+m[1], sm:+m[2], eh:+m[3], em:+m[4] } : null;
+  return m?{sh:+m[1],sm:+m[2],eh:+m[3],em:+m[4]}:null;
 }
-function shiftDurationMinutes(range) {
-  if (!range) return 0;
-  let startMin = range.sh*60 + range.sm;
-  let endMin   = range.eh*60 + range.em;
-  if (endMin <= startMin) endMin += 24*60; // overnight
-  return endMin - startMin;
+function shiftDurationMinutes(range){
+  if(!range)return 0;
+  let s=range.sh*60+range.sm,e=range.eh*60+range.em;
+  if(e<=s)e+=1440;
+  return e-s;
 }
 
-// ── Monthly stats ──────────────────────────────────────────────────────────────
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+// ── Monthly stats ─────────────────────────────────────────────────────────────
+const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-function computeStats(schedule) {
-  // Returns array of { label, totalMins, shiftDays, leaveDays, unknownShifts }
-  const months = {};
-  for (const entry of schedule) {
-    const d    = new Date(entry.date);
-    const key  = `${d.getFullYear()}-${d.getMonth()}`;
-    const lbl  = `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
-    if (!months[key]) months[key] = { label:lbl, totalMins:0, shiftDays:0, leaveDays:0, unknownShifts:0 };
-    const m = months[key];
-    const jsDay = d.getDay();
-    const real  = entry.shifts.filter(s=>s.toUpperCase()!=='X');
-    const isX   = entry.shifts.some(s=>s.toUpperCase()==='X') && !real.length;
-    if (isX) { m.leaveDays++; continue; }
-    if (!real.length) continue;
+function computeStats(schedule){
+  const months={};
+  for(const entry of schedule){
+    const d=new Date(entry.date),key=`${d.getFullYear()}-${d.getMonth()}`;
+    const lbl=`${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+    if(!months[key])months[key]={label:lbl,totalMins:0,shiftDays:0,leaveDays:0,unknownShifts:0};
+    const m=months[key],jsDay=d.getDay();
+    const real=entry.shifts.filter(s=>s.toUpperCase()!=='X');
+    const isX=entry.shifts.some(s=>s.toUpperCase()==='X')&&!real.length;
+    if(isX){m.leaveDays++;continue;}
+    if(!real.length)continue;
     m.shiftDays++;
-    for (const code of real) {
-      const info  = getShiftInfoForDay(code, jsDay);
-      const range = info ? parseTimeRange(info.time) : null;
-      if (range) {
-        m.totalMins += shiftDurationMinutes(range);
-      } else {
-        m.unknownShifts++;
-      }
+    for(const code of real){
+      const info=getShiftInfoForDay(code,jsDay);
+      const range=info?parseTimeRange(info.time):null;
+      if(range)m.totalMins+=shiftDurationMinutes(range);
+      else m.unknownShifts++;
     }
   }
   return Object.values(months);
 }
-
-function fmtHours(mins) {
-  const h = Math.floor(mins/60), m = mins%60;
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
-function renderStats(schedule) {
-  const stats = computeStats(schedule);
-  if (!stats.length) { statsBar.innerHTML=''; return; }
-  statsBar.innerHTML = stats.map(s => `
+function fmtHours(mins){const h=Math.floor(mins/60),m=mins%60;return m>0?`${h}h ${m}m`:`${h}h`;}
+function renderStats(schedule){
+  const stats=computeStats(schedule);
+  if(!stats.length){statsBar.innerHTML='';return;}
+  statsBar.innerHTML=stats.map(s=>`
     <div class="stats-month">
       <div class="stats-month-name">${s.label}</div>
       <div class="stats-tiles">
-        <div class="stats-tile">
-          <div class="stats-tile-value">${s.totalMins>0 ? fmtHours(s.totalMins) : '—'}</div>
-          <div class="stats-tile-label">Scheduled hours${s.unknownShifts>0?` <span class="stats-unknown" title="${s.unknownShifts} shift(s) have no time data">+${s.unknownShifts} unknown</span>`:''}${ s.totalMins>0&&s.unknownShifts>0?' (partial)':'' }</div>
-        </div>
-        <div class="stats-tile">
-          <div class="stats-tile-value">${s.shiftDays}</div>
-          <div class="stats-tile-label">Working days</div>
-        </div>
-        <div class="stats-tile">
-          <div class="stats-tile-value stats-leave">${s.leaveDays}</div>
-          <div class="stats-tile-label">Days off (X)</div>
-        </div>
+        <div class="stats-tile"><div class="stats-tile-value">${s.totalMins>0?fmtHours(s.totalMins):'—'}</div><div class="stats-tile-label">Scheduled hours${s.unknownShifts>0?` <span class="stats-unknown" title="${s.unknownShifts} shift(s) have no time data">+${s.unknownShifts} unknown</span>`:''}</div></div>
+        <div class="stats-tile"><div class="stats-tile-value">${s.shiftDays}</div><div class="stats-tile-label">Working days</div></div>
+        <div class="stats-tile"><div class="stats-tile-value stats-leave">${s.leaveDays}</div><div class="stats-tile-label">Days off (X)</div></div>
       </div>
     </div>`).join('');
 }
 
-// ── Export to .ics ─────────────────────────────────────────────────────────────
-function toIcsDate(date, h, min) {
-  const d=new Date(date); d.setHours(h,min,0,0);
-  return d.getUTCFullYear()+pad2(d.getUTCMonth()+1)+pad2(d.getUTCDate())+'T'+pad2(d.getUTCHours())+pad2(d.getUTCMinutes())+'00Z';
-}
-function exportIcs(schedule) {
-  const now=new Date();
-  const stamp=now.getUTCFullYear()+pad2(now.getUTCMonth()+1)+pad2(now.getUTCDate())+'T'+pad2(now.getUTCHours())+pad2(now.getUTCMinutes())+'00Z';
+// ── Export to .ics ────────────────────────────────────────────────────────────
+function toIcsDate(date,h,min){const d=new Date(date);d.setHours(h,min,0,0);return d.getUTCFullYear()+pad2(d.getUTCMonth()+1)+pad2(d.getUTCDate())+'T'+pad2(d.getUTCHours())+pad2(d.getUTCMinutes())+'00Z';}
+function exportIcs(schedule){
+  const now=new Date(),stamp=now.getUTCFullYear()+pad2(now.getUTCMonth()+1)+pad2(now.getUTCDate())+'T'+pad2(now.getUTCHours())+pad2(now.getUTCMinutes())+'00Z';
   const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Schedule Viewer//EN','CALSCALE:GREGORIAN','METHOD:PUBLISH'];
   let uid=1;
-  for (const entry of schedule) {
-    const date=new Date(entry.date), jsDay=date.getDay();
+  for(const entry of schedule){
+    const date=new Date(entry.date),jsDay=date.getDay();
     const realShifts=entry.shifts.filter(s=>s.toUpperCase()!=='X');
-    if (!realShifts.length) continue;
-    for (const code of realShifts) {
-      const info=getShiftInfoForDay(code,jsDay);
-      const range=info?parseTimeRange(info.time):null;
-      const name=info?info.name:code;
-      if (range) {
-        const startDate=new Date(date);
-        const dtStart=toIcsDate(startDate,range.sh,range.sm);
-        const endDate=new Date(date);
-        if (range.eh<range.sh) endDate.setDate(endDate.getDate()+1);
-        const dtEnd=toIcsDate(endDate,range.eh,range.em);
-        lines.push('BEGIN:VEVENT',`UID:sv-${uid++}@schedule-viewer`,`DTSTAMP:${stamp}`,`DTSTART:${dtStart}`,`DTEND:${dtEnd}`,`SUMMARY:${name} (${code})`,info?.labels?.length?`DESCRIPTION:${info.labels.join(', ')}`:'','END:VEVENT');
-      } else {
+    if(!realShifts.length)continue;
+    for(const code of realShifts){
+      const info=getShiftInfoForDay(code,jsDay),range=info?parseTimeRange(info.time):null,name=info?info.name:code;
+      if(range){
+        const sd=new Date(date),ed=new Date(date);
+        if(range.eh<range.sh)ed.setDate(ed.getDate()+1);
+        lines.push('BEGIN:VEVENT',`UID:sv-${uid++}@schedule-viewer`,`DTSTAMP:${stamp}`,`DTSTART:${toIcsDate(sd,range.sh,range.sm)}`,`DTEND:${toIcsDate(ed,range.eh,range.em)}`,`SUMMARY:${name} (${code})`,info?.labels?.length?`DESCRIPTION:${info.labels.join(', ')}`:'','END:VEVENT');
+      }else{
         const ds=entry.date.replace(/-/g,'');
         lines.push('BEGIN:VEVENT',`UID:sv-${uid++}@schedule-viewer`,`DTSTAMP:${stamp}`,`DTSTART;VALUE=DATE:${ds}`,`DTEND;VALUE=DATE:${ds}`,`SUMMARY:${name} (${code})`,'END:VEVENT');
       }
@@ -191,38 +269,31 @@ function exportIcs(schedule) {
   }
   lines.push('END:VCALENDAR');
   const blob=new Blob([lines.filter(Boolean).join('\r\n')],{type:'text/calendar;charset=utf-8'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='schedule.ics'; a.click(); URL.revokeObjectURL(a.href);
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='schedule.ics';a.click();URL.revokeObjectURL(a.href);
 }
 exportBtn.addEventListener('click',()=>exportIcs(lastSchedule));
 
-// ── Next shift banner ──────────────────────────────────────────────────────────
-function parseShiftStartTime(timeStr) {
-  if (!timeStr) return null;
-  const m=timeStr.match(/(\d{1,2})[.:](\d{2})/);
-  return m?{h:+m[1],min:+m[2]}:null;
-}
-function renderNextShiftBanner(schedule) {
-  if (countdownInterval){clearInterval(countdownInterval);countdownInterval=null;}
+// ── Next shift banner ─────────────────────────────────────────────────────────
+function parseShiftStartTime(timeStr){if(!timeStr)return null;const m=timeStr.match(/(\d{1,2})[.:](\d{2})/);return m?{h:+m[1],min:+m[2]}:null;}
+function renderNextShiftBanner(schedule){
+  if(countdownInterval){clearInterval(countdownInterval);countdownInterval=null;}
   const now=new Date(),today=new Date(now);today.setHours(0,0,0,0);
   let nextEntry=null,nextShiftCode=null,nextShiftTime=null,nextDate=null;
-  for (const entry of schedule) {
+  for(const entry of schedule){
     const d=new Date(entry.date);
-    if (d<today) continue;
-    const jsDay=d.getDay();
-    const realShifts=entry.shifts.filter(s=>s.toUpperCase()!=='X');
-    if (!realShifts.length) continue;
-    for (const code of realShifts) {
-      const info=getShiftInfoForDay(code,jsDay);
-      const start=info?parseShiftStartTime(info.time):null;
-      let shiftStart=new Date(d);
-      if (start){shiftStart.setHours(start.h,start.min,0,0);if(start.h<12)shiftStart.setDate(shiftStart.getDate()+1);}else{shiftStart.setHours(20,0,0,0);}
-      if (shiftStart>now){nextEntry=entry;nextShiftCode=code;nextShiftTime=info?.time||'';nextDate=shiftStart;break;}
+    if(d<today)continue;
+    const jsDay=d.getDay(),realShifts=entry.shifts.filter(s=>s.toUpperCase()!=='X');
+    if(!realShifts.length)continue;
+    for(const code of realShifts){
+      const info=getShiftInfoForDay(code,jsDay),start=info?parseShiftStartTime(info.time):null;
+      let ss=new Date(d);
+      if(start){ss.setHours(start.h,start.min,0,0);if(start.h<12)ss.setDate(ss.getDate()+1);}else ss.setHours(20,0,0,0);
+      if(ss>now){nextEntry=entry;nextShiftCode=code;nextShiftTime=info?.time||'';nextDate=ss;break;}
     }
-    if (nextEntry) break;
+    if(nextEntry)break;
   }
-  if (!nextEntry){nextShiftBanner.classList.add('hidden');return;}
-  const jsDay=new Date(nextEntry.date).getDay();
-  const info=getShiftInfoForDay(nextShiftCode,jsDay);
+  if(!nextEntry){nextShiftBanner.classList.add('hidden');return;}
+  const jsDay=new Date(nextEntry.date).getDay(),info=getShiftInfoForDay(nextShiftCode,jsDay);
   const isToday=new Date(nextEntry.date).setHours(0,0,0,0)===today.getTime();
   nextShiftBanner.className='next-shift-banner'+(isToday?' nsb-today':'');
   function updateBanner(){
@@ -238,28 +309,22 @@ function renderNextShiftBanner(schedule) {
   countdownInterval=setInterval(updateBanner,30000);
 }
 
-// ── Tooltip HTML ───────────────────────────────────────────────────────────────
+// ── Tooltip HTML ─────────────────────────────────────────────────────────────
 function buildShiftHTML(code,jsDay){
-  if(code.toUpperCase()==='X') return `<div class="tt-entry tt-leave-entry"><span class="tt-leave-label">Beviljad ledighet</span></div>`;
-  if(!legendMap[code]) return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
+  if(code.toUpperCase()==='X')return `<div class="tt-entry tt-leave-entry"><span class="tt-leave-label">Beviljad ledighet</span></div>`;
+  if(!legendMap[code])return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
   const info=getShiftInfoForDay(code,jsDay);
-  if(!info) return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
+  if(!info)return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
   const labelsHTML=info.labels.map(l=>`<span class="tt-label-tag">${l}</span>`).join('');
   return `<div class="tt-entry"><div class="tt-name">${info.name} <span class="tt-code-tag">${code}</span></div>${labelsHTML?`<div class="tt-labels">${labelsHTML}</div>`:''} ${info.time?`<div class="tt-time">${info.time}</div>`:''}</div>`;
 }
 
-// ── View toggle ────────────────────────────────────────────────────────────────
+// ── View toggle ──────────────────────────────────────────────────────────────
+function switchView(view){const cal=view==='calendar';calBtn.classList.toggle('active',cal);calBtn.setAttribute('aria-pressed',cal);dayBtn.classList.toggle('active',!cal);dayBtn.setAttribute('aria-pressed',!cal);calendarContainer.classList.toggle('hidden',!cal);dailyContainer.classList.toggle('hidden',cal);}
 calBtn.addEventListener('click',()=>switchView('calendar'));
 dayBtn.addEventListener('click',()=>switchView('daily'));
-function switchView(view){
-  const cal=view==='calendar';
-  calBtn.classList.toggle('active',cal);calBtn.setAttribute('aria-pressed',cal);
-  dayBtn.classList.toggle('active',!cal);dayBtn.setAttribute('aria-pressed',!cal);
-  calendarContainer.classList.toggle('hidden',!cal);
-  dailyContainer.classList.toggle('hidden',cal);
-}
 
-// ── Load schedule ──────────────────────────────────────────────────────────────
+// ── Load schedule (fetch + save) ──────────────────────────────────────────────
 loadBtn.addEventListener('click',async()=>{
   const url=urlInput.value.trim(),id=idInput.value.trim();
   if(!url||!id){showError('Please enter both a schedule URL and your Employee ID.');return;}
@@ -272,7 +337,8 @@ loadBtn.addEventListener('click',async()=>{
   try{
     const res=await fetch('http://localhost:3000/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,id})});
     const data=await res.json();
-    if(!res.ok||data.error) throw new Error(data.error||'Server error.');
+    if(!res.ok||data.error)throw new Error(data.error||'Server error.');
+    saveToHistory(data);          // ← persist to localStorage
     legendMap=data.legend||{};
     lastSchedule=data.schedule||[];
     renderStats(lastSchedule);
@@ -287,7 +353,7 @@ loadBtn.addEventListener('click',async()=>{
   }
 });
 
-// ── Calendar view ──────────────────────────────────────────────────────────────
+// ── Calendar view ─────────────────────────────────────────────────────────────
 const DAY_NAMES=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 function renderCalendar(schedule){
   if(!schedule?.length){calendarContainer.innerHTML="<p class='empty-state'>No shifts found.</p>";return;}
@@ -295,14 +361,13 @@ function renderCalendar(schedule){
   schedule.forEach(e=>{
     shiftMap[e.date]=e.shifts;
     const d=new Date(e.date),key=`${d.getFullYear()}-${d.getMonth()}`;
-    if(!monthGroups[key]) monthGroups[key]={year:d.getFullYear(),month:d.getMonth()};
+    if(!monthGroups[key])monthGroups[key]={year:d.getFullYear(),month:d.getMonth()};
   });
   const today=new Date();today.setHours(0,0,0,0);
   Object.values(monthGroups).forEach(({year,month})=>{
     const first=new Date(year,month,1),last=new Date(year,month+1,0);
     const offset=first.getDay()===0?6:first.getDay()-1;
-    const hdr=document.createElement('div');hdr.className='month-header';
-    hdr.textContent=`${MONTH_NAMES[month]} ${year}`;calendarContainer.appendChild(hdr);
+    const hdr=document.createElement('div');hdr.className='month-header';hdr.textContent=`${MONTH_NAMES[month]} ${year}`;calendarContainer.appendChild(hdr);
     const names=document.createElement('div');names.className='cal-day-names';
     DAY_NAMES.forEach(n=>{const s=document.createElement('span');s.textContent=n;names.appendChild(s);});
     calendarContainer.appendChild(names);
@@ -311,21 +376,13 @@ function renderCalendar(schedule){
     for(let d=1;d<=last.getDate();d++){
       const dt=new Date(year,month,d),dateStr=toDateStr(dt),jsDay=dt.getDay();
       const shifts=shiftMap[dateStr],isToday=dt.getTime()===today.getTime();
-      const isWknd=jsDay===0||jsDay===6,isXOnly=shifts?.length===1&&shifts[0].toUpperCase()==='X';
-      const hasShifts=shifts?.length>0;
+      const isWknd=jsDay===0||jsDay===6,isXOnly=shifts?.length===1&&shifts[0].toUpperCase()==='X',hasShifts=shifts?.length>0;
       const cell=document.createElement('div');
       cell.className='cal-cell'+(isXOnly?' leave':hasShifts?' has-shift':'')+(isToday?' today':'')+(isWknd?' weekend':'');
       const num=document.createElement('span');num.className='cal-num';num.textContent=d;cell.appendChild(num);
       if(hasShifts){
-        shifts.forEach(s=>{
-          const b=document.createElement('span');
-          b.className='cal-badge'+(isXOnly?' leave-badge':'');
-          b.textContent=s;cell.appendChild(b);
-        });
-        cell.addEventListener('mouseenter',ev=>{
-          tooltip.innerHTML=`<div class="tt-header">${dateStr}</div>`+shifts.map(s=>buildShiftHTML(s,jsDay)).join('<div class="tt-shift-sep"></div>');
-          tooltip.classList.add('show');moveTooltip(ev);
-        });
+        shifts.forEach(s=>{const b=document.createElement('span');b.className='cal-badge'+(isXOnly?' leave-badge':'');b.textContent=s;cell.appendChild(b);});
+        cell.addEventListener('mouseenter',ev=>{tooltip.innerHTML=`<div class="tt-header">${dateStr}</div>`+shifts.map(s=>buildShiftHTML(s,jsDay)).join('<div class="tt-shift-sep"></div>');tooltip.classList.add('show');moveTooltip(ev);});
         cell.addEventListener('mousemove',moveTooltip);
         cell.addEventListener('mouseleave',()=>tooltip.classList.remove('show'));
       }
@@ -334,12 +391,7 @@ function renderCalendar(schedule){
     calendarContainer.appendChild(grid);
   });
 }
-function moveTooltip(e){
-  const pad=16,tw=tooltip.offsetWidth||220,th=tooltip.offsetHeight||80;
-  const x=e.clientX+pad,y=e.clientY-10;
-  tooltip.style.left=(x+tw>window.innerWidth?e.clientX-tw-pad:x)+'px';
-  tooltip.style.top=(y+th>window.innerHeight?e.clientY-th-pad:y)+'px';
-}
+function moveTooltip(e){const pad=16,tw=tooltip.offsetWidth||220,th=tooltip.offsetHeight||80,x=e.clientX+pad,y=e.clientY-10;tooltip.style.left=(x+tw>window.innerWidth?e.clientX-tw-pad:x)+'px';tooltip.style.top=(y+th>window.innerHeight?e.clientY-th-pad:y)+'px';}
 
 // ── Daily list view ────────────────────────────────────────────────────────────
 const FULL_DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -352,9 +404,9 @@ function renderDaily(schedule){
     const item=document.createElement('div');
     item.className='daily-item'+(isXOnly?' leave':'')+(date.getTime()===today.getTime()?' today':'');
     const shiftsHTML=entry.shifts.map(code=>{
-      if(code.toUpperCase()==='X') return `<div class="daily-shift-row"><span class="badge leave-badge">X</span><span class="daily-shift-name daily-leave-label">Beviljad ledighet</span></div>`;
+      if(code.toUpperCase()==='X')return `<div class="daily-shift-row"><span class="badge leave-badge">X</span><span class="daily-shift-name daily-leave-label">Beviljad ledighet</span></div>`;
       const info=getShiftInfoForDay(code,jsDay);
-      if(!info) return `<div class="daily-shift-row"><span class="badge">${code}</span></div>`;
+      if(!info)return `<div class="daily-shift-row"><span class="badge">${code}</span></div>`;
       const labelsHTML=info.labels.map(l=>`<span class="daily-label-tag">${l}</span>`).join('');
       return `<div class="daily-shift-row"><span class="badge">${code}</span><span class="daily-shift-name">${info.name}</span>${labelsHTML}${info.time?`<span class="daily-shift-time">${info.time}</span>`:''}</div>`;
     }).join('');
@@ -363,9 +415,7 @@ function renderDaily(schedule){
   });
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-function toDateStr(d){
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function toDateStr(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
 function showError(msg){errorMsg.textContent=msg;errorMsg.classList.remove('hidden');}
 function hideError(){errorMsg.classList.add('hidden');errorMsg.textContent='';}
