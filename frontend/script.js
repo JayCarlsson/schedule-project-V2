@@ -66,7 +66,6 @@ function deleteFromHistory(id) {
   const updated = loadStoredHistory().filter(h => h.id !== id);
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(updated)); } catch {}
   if (activeHistoryId === id) {
-    // If we just deleted the active one, load the next available or hide
     if (updated.length) {
       displayHistoryEntry(updated[0]);
     } else {
@@ -90,6 +89,10 @@ function displayHistoryEntry(entry) {
   legendMap    = entry.legend  || {};
   lastSchedule = entry.schedule || [];
   activeHistoryId = entry.id;
+  // Clear containers BEFORE rendering to prevent duplicate months
+  calendarContainer.innerHTML = '';
+  dailyContainer.innerHTML    = '';
+  statsBar.innerHTML          = '';
   renderHistory();
   renderStats(lastSchedule);
   renderCalendar(lastSchedule);
@@ -117,10 +120,8 @@ function renderHistory() {
 
 // Delegate click events on history list
 historyList.addEventListener('click', e => {
-  // Delete button
   const delBtn = e.target.closest('[data-del]');
   if (delBtn) { e.stopPropagation(); deleteFromHistory(delBtn.dataset.del); return; }
-  // Chip itself
   const chip = e.target.closest('[data-id]');
   if (chip) {
     const entry = loadStoredHistory().find(h => h.id === chip.dataset.id);
@@ -338,7 +339,7 @@ loadBtn.addEventListener('click',async()=>{
     const res=await fetch('http://localhost:3000/api/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,id})});
     const data=await res.json();
     if(!res.ok||data.error)throw new Error(data.error||'Server error.');
-    saveToHistory(data);          // ← persist to localStorage
+    saveToHistory(data);
     legendMap=data.legend||{};
     lastSchedule=data.schedule||[];
     renderStats(lastSchedule);
@@ -356,6 +357,7 @@ loadBtn.addEventListener('click',async()=>{
 // ── Calendar view ─────────────────────────────────────────────────────────────
 const DAY_NAMES=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 function renderCalendar(schedule){
+  calendarContainer.innerHTML = '';
   if(!schedule?.length){calendarContainer.innerHTML="<p class='empty-state'>No shifts found.</p>";return;}
   const shiftMap={},monthGroups={};
   schedule.forEach(e=>{
@@ -396,6 +398,7 @@ function moveTooltip(e){const pad=16,tw=tooltip.offsetWidth||220,th=tooltip.offs
 // ── Daily list view ────────────────────────────────────────────────────────────
 const FULL_DAYS=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function renderDaily(schedule){
+  dailyContainer.innerHTML = '';
   if(!schedule?.length){dailyContainer.innerHTML="<p class='empty-state'>No shifts found.</p>";return;}
   const today=new Date();today.setHours(0,0,0,0);
   schedule.forEach(entry=>{
