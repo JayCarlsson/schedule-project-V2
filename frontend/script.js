@@ -10,15 +10,13 @@ const tooltip           = document.getElementById("tooltip");
 
 let legendMap = {};
 
-// ── Swedish day name → JS getDay() (0=Sun … 6=Sat) ──────────────────────────────────
+// ── Swedish day name → JS getDay() (0=Sun … 6=Sat)
 const SV_DAYS = {
   'sön':0,'son':0,  'mån':1,'man':1,  'tis':2,
   'ons':3,  'tor':4,'tors':4,  'fre':5,  'lör':6,'lor':6
 };
 
-function svDay(name) {
-  return SV_DAYS[name.trim().toLowerCase()];
-}
+function svDay(name) { return SV_DAYS[name.trim().toLowerCase()]; }
 
 function dayMatchesSingle(jsDay, name) {
   const v = svDay(name);
@@ -26,108 +24,80 @@ function dayMatchesSingle(jsDay, name) {
 }
 
 function dayMatchesSpec(jsDay, spec) {
-  const s = spec.trim();
+  const s  = spec.trim();
   const sl = s.toLowerCase();
-
-  // Swedish compound specs
-  if (sl === 'vardagar' || sl === 'vardag' || sl === 'mån-fre' || sl === 'man-fre') {
-    return jsDay >= 1 && jsDay <= 5; // Mon–Fri
-  }
-  if (sl === 'helg' || sl === 'helgdag' || sl === 'helger') {
-    return jsDay === 0 || jsDay === 6; // Sat–Sun
-  }
-
-  // List: "Fre & Lör"
-  if (s.includes('&')) {
-    return s.split('&').some(p => dayMatchesSingle(jsDay, p));
-  }
-
-  // Range: "Sön-Tors"
+  if (sl === 'vardagar' || sl === 'vardag' || sl === 'mån-fre') return jsDay >= 1 && jsDay <= 5;
+  if (sl === 'helg' || sl === 'helgdag' || sl === 'helger')    return jsDay === 0 || jsDay === 6;
+  if (s.includes('&')) return s.split('&').some(p => dayMatchesSingle(jsDay, p));
   if (s.includes('-')) {
     const [a, b] = s.split('-');
-    const start = svDay(a);
-    const end   = svDay(b);
+    const start = svDay(a), end = svDay(b);
     if (start === undefined || end === undefined) return false;
     if (start <= end) return jsDay >= start && jsDay <= end;
-    return jsDay >= start || jsDay <= end; // wrap-around e.g. Tor-Sön
+    return jsDay >= start || jsDay <= end;
   }
-
   return dayMatchesSingle(jsDay, s);
 }
 
-// Split a legend times string into its per-day parts.
-// Cherry uses "ll" (two L’s) as separator, but we also handle |, \n, etc.
+// Split times string by any separator variant Cherry might use.
+// We normalise everything to \n then split.
 function splitTimeParts(timesStr) {
   if (!timesStr) return [];
-  // Try separators in order of specificity
-  for (const sep of [/\s*ll\s*/, /\s*\|\|\s*/, /\s*\|\s*/, /\n/]) {
-    const parts = timesStr.split(sep).map(p => p.trim()).filter(Boolean);
-    if (parts.length > 1) return parts;
-  }
-  // Only one part (or no separator found)
-  return [timesStr.trim()].filter(Boolean);
+  let s = timesStr
+    .replace(/\s*ll\s*/gi, '\n')    // two L’s (case-insensitive)
+    .replace(/\s*\|\|\s*/g, '\n')  // double pipe
+    .replace(/\s*\|\s*/g, '\n')    // single pipe
+    .replace(/\r/g, '');             // strip CR
+  const parts = s.split('\n').map(p => p.trim()).filter(Boolean);
+  if (parts.length > 1) return parts;
+  // Last resort: look for multiple DaySpec:Time groups in one string
+  const re = /[A-ZÅÄÖ][a-zåäö\-& ]{1,14}:\s*[\d][\d.\-\u2013\u2014 ]+/g;
+  const found = timesStr.match(re);
+  if (found && found.length > 1) return found.map(p => p.trim());
+  return [timesStr.trim()];
 }
 
-// Given a times string and a JS day number, return the time that applies.
 function matchTimeForDay(timesStr, jsDay) {
   const parts = splitTimeParts(timesStr);
-
   for (const part of parts) {
     const colonIdx = part.indexOf(':');
-
-    if (colonIdx === -1) return part; // No colon — plain time, any day
-
+    if (colonIdx === -1) return part;
     const dayPart  = part.substring(0, colonIdx).trim();
     const timePart = part.substring(colonIdx + 1).trim();
-
-    if (/^\d/.test(dayPart)) return part; // dayPart is a time — any day
-
+    if (/^\d/.test(dayPart)) return part;
     if (dayMatchesSpec(jsDay, dayPart)) return timePart;
   }
-
   return null;
 }
 
-// Find the best legend entry + matched time for a code on a given day.
 function getShiftInfoForDay(code, jsDay) {
   const entries = legendMap[code];
   if (!entries || entries.length === 0) return null;
-
-  // Try each entry; return the first whose times include this day
   for (const entry of entries) {
     const time = matchTimeForDay(entry.times, jsDay);
     if (time !== null) return { name: entry.name, time };
   }
-
-  // No day-specific match — fall back to first entry with raw times
-  const fallback = entries[0];
-  return { name: fallback.name, time: fallback.times || '' };
+  // Fallback: return first entry’s name; time empty (will be hidden)
+  return { name: entries[0].name, time: entries[0].times || '' };
 }
 
-// ── Build tooltip HTML for one shift code ───────────────────────────────────────
+// ── Build tooltip HTML
 function buildShiftHTML(code, jsDay) {
   if (code.toUpperCase() === 'X') {
-    return `<div class="tt-entry tt-leave-entry">
-      <span class="tt-leave-label">Beviljad ledighet</span>
-    </div>`;
+    return `<div class="tt-entry tt-leave-entry"><span class="tt-leave-label">Beviljad ledighet</span></div>`;
   }
-
   if (!legendMap[code]) {
     return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
   }
-
   const info = getShiftInfoForDay(code, jsDay);
-  if (!info) {
-    return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
-  }
-
+  if (!info) return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
   return `<div class="tt-entry">
     <div class="tt-name">${info.name} <span class="tt-code-tag">${code}</span></div>
-    ${info.time ? `<div class="tt-time">${info.time}</div>` : ''}
+    ${info.time ? `<div class="tt-time">${info.time}</div>` : '<div class="tt-time tt-no-time">See schedule for exact time</div>'}
   </div>`;
 }
 
-// ── View toggle ────────────────────────────────────────────────────────────────
+// ── View toggle
 calBtn.addEventListener("click", () => switchView("calendar"));
 dayBtn.addEventListener("click", () => switchView("daily"));
 
@@ -135,28 +105,23 @@ function switchView(view) {
   if (view === "calendar") {
     calBtn.classList.add("active");    calBtn.setAttribute("aria-pressed", "true");
     dayBtn.classList.remove("active"); dayBtn.setAttribute("aria-pressed", "false");
-    calendarContainer.classList.remove("hidden");
-    dailyContainer.classList.add("hidden");
+    calendarContainer.classList.remove("hidden"); dailyContainer.classList.add("hidden");
   } else {
     dayBtn.classList.add("active");    dayBtn.setAttribute("aria-pressed", "true");
     calBtn.classList.remove("active"); calBtn.setAttribute("aria-pressed", "false");
-    dailyContainer.classList.remove("hidden");
-    calendarContainer.classList.add("hidden");
+    dailyContainer.classList.remove("hidden"); calendarContainer.classList.add("hidden");
   }
 }
 
-// ── Load schedule ────────────────────────────────────────────────────────────
+// ── Load schedule
 loadBtn.addEventListener("click", async () => {
   const url = document.getElementById("url").value.trim();
   const id  = document.getElementById("id").value.trim();
-
   if (!url || !id) { showError("Please enter both a schedule URL and your Employee ID."); return; }
-
   hideError();
   loading.classList.remove("hidden");
   scheduleSection.classList.add("hidden");
-  calendarContainer.innerHTML = "";
-  dailyContainer.innerHTML = "";
+  calendarContainer.innerHTML = ""; dailyContainer.innerHTML = "";
 
   try {
     const response = await fetch("http://localhost:3000/api/scrape", {
@@ -164,15 +129,19 @@ loadBtn.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, id })
     });
-
     const data = await response.json();
     if (!response.ok || data.error) throw new Error(data.error || "Server error.");
 
     legendMap = data.legend || {};
+
+    // ── DEBUG: log legend to browser console so we can inspect raw times strings
+    console.log("📖 legendMap:", legendMap);
+    console.log("🔍 VA entries:",  legendMap['VA']  || 'not found');
+    console.log("🔍 PD3 entries:", legendMap['PD3'] || 'not found');
+
     renderCalendar(data.schedule);
     renderDaily(data.schedule);
     scheduleSection.classList.remove("hidden");
-
   } catch (err) {
     showError("Could not load schedule: " + err.message);
   } finally {
@@ -180,29 +149,24 @@ loadBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Calendar view ────────────────────────────────────────────────────────────────
+// ── Calendar view
 const MONTH_NAMES = ["January","February","March","April","May","June",
                      "July","August","September","October","November","December"];
 const DAY_NAMES   = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
 function renderCalendar(schedule) {
   if (!schedule || schedule.length === 0) {
-    calendarContainer.innerHTML = "<p class='empty-state'>No shifts found.</p>";
-    return;
+    calendarContainer.innerHTML = "<p class='empty-state'>No shifts found.</p>"; return;
   }
-
   const shiftMap = {};
   schedule.forEach(e => { shiftMap[e.date] = e.shifts; });
-
   const monthGroups = {};
   schedule.forEach(e => {
     const d = new Date(e.date);
     const key = `${d.getFullYear()}-${d.getMonth()}`;
     if (!monthGroups[key]) monthGroups[key] = { year: d.getFullYear(), month: d.getMonth() };
   });
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0,0,0,0);
 
   Object.values(monthGroups).forEach(({ year, month }) => {
     const firstDay    = new Date(year, month, 1);
@@ -215,14 +179,11 @@ function renderCalendar(schedule) {
     monthHeader.textContent = `${MONTH_NAMES[month]} ${year}`;
     calendarContainer.appendChild(monthHeader);
 
-    const nameRow = document.createElement("div");
-    nameRow.className = "cal-day-names";
+    const nameRow = document.createElement("div"); nameRow.className = "cal-day-names";
     DAY_NAMES.forEach(n => { const s = document.createElement("span"); s.textContent = n; nameRow.appendChild(s); });
     calendarContainer.appendChild(nameRow);
 
-    const grid = document.createElement("div");
-    grid.className = "cal-grid";
-
+    const grid = document.createElement("div"); grid.className = "cal-grid";
     for (let i = 0; i < startOffset; i++) {
       const e = document.createElement("div"); e.className = "cal-cell empty"; grid.appendChild(e);
     }
@@ -239,79 +200,59 @@ function renderCalendar(schedule) {
 
       const cell = document.createElement("div");
       cell.className = "cal-cell" +
-        (isXOnly   ? " leave"     : hasShifts ? " has-shift" : "") +
-        (isToday   ? " today"     : "") +
-        (isWeekend ? " weekend"   : "");
+        (isXOnly ? " leave" : hasShifts ? " has-shift" : "") +
+        (isToday ? " today" : "") + (isWeekend ? " weekend" : "");
 
-      const num = document.createElement("span");
-      num.className = "cal-num";
-      num.textContent = d;
+      const num = document.createElement("span"); num.className = "cal-num"; num.textContent = d;
       cell.appendChild(num);
 
       if (hasShifts) {
         shifts.forEach(s => {
           const badge = document.createElement("span");
           badge.className = "cal-badge" + (isXOnly ? " leave-badge" : "");
-          badge.textContent = s;
-          cell.appendChild(badge);
+          badge.textContent = s; cell.appendChild(badge);
         });
-
         cell.addEventListener("mouseenter", (ev) => {
-          const inner = shifts
-            .map(s => buildShiftHTML(s, jsDay))
-            .join('<div class="tt-shift-sep"></div>');
+          const inner = shifts.map(s => buildShiftHTML(s, jsDay)).join('<div class="tt-shift-sep"></div>');
           tooltip.innerHTML = `<div class="tt-header">${dateStr}</div>` + inner;
-          tooltip.classList.add("show");
-          moveTooltip(ev);
+          tooltip.classList.add("show"); moveTooltip(ev);
         });
         cell.addEventListener("mousemove", moveTooltip);
         cell.addEventListener("mouseleave", () => tooltip.classList.remove("show"));
       }
-
       grid.appendChild(cell);
     }
-
     calendarContainer.appendChild(grid);
   });
 }
 
 function moveTooltip(e) {
-  const pad = 16;
-  const tw  = tooltip.offsetWidth  || 220;
-  const th  = tooltip.offsetHeight || 80;
-  const x   = e.clientX + pad;
-  const y   = e.clientY - 10;
-  tooltip.style.left = (x + tw > window.innerWidth  ? e.clientX - tw - pad : x) + "px";
-  tooltip.style.top  = (y + th > window.innerHeight ? e.clientY - th - pad : y) + "px";
+  const pad=16, tw=tooltip.offsetWidth||220, th=tooltip.offsetHeight||80;
+  const x=e.clientX+pad, y=e.clientY-10;
+  tooltip.style.left=(x+tw>window.innerWidth  ? e.clientX-tw-pad : x)+"px";
+  tooltip.style.top =(y+th>window.innerHeight ? e.clientY-th-pad : y)+"px";
 }
 
-// ── Daily list view ────────────────────────────────────────────────────────────
+// ── Daily list view
 const FULL_DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 function renderDaily(schedule) {
   if (!schedule || schedule.length === 0) {
-    dailyContainer.innerHTML = "<p class='empty-state'>No shifts found.</p>";
-    return;
+    dailyContainer.innerHTML = "<p class='empty-state'>No shifts found.</p>"; return;
   }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
+  const today = new Date(); today.setHours(0,0,0,0);
   schedule.forEach(entry => {
     const date    = new Date(entry.date);
     const jsDay   = date.getDay();
     const isToday = date.getTime() === today.getTime();
     const isXOnly = entry.shifts.length === 1 && entry.shifts[0].toUpperCase() === 'X';
-
     const item = document.createElement("div");
     item.className = "daily-item" + (isXOnly ? " leave" : "") + (isToday ? " today" : "");
-
     const shiftsHTML = entry.shifts.map(code => {
       if (code.toUpperCase() === 'X') {
         return `<div class="daily-shift-row">
           <span class="badge leave-badge">X</span>
-          <span class="daily-shift-name daily-leave-label">Beviljad ledighet</span>
-        </div>`;
+          <span class="daily-shift-name daily-leave-label">Beviljad ledighet</span></div>`;
       }
       const info = getShiftInfoForDay(code, jsDay);
       if (!info) return `<div class="daily-shift-row"><span class="badge">${code}</span></div>`;
@@ -321,20 +262,17 @@ function renderDaily(schedule) {
         ${info.time ? `<span class="daily-shift-time">${info.time}</span>` : ''}
       </div>`;
     }).join("");
-
     item.innerHTML = `
       <div class="daily-date">
         <span class="daily-weekday">${FULL_DAYS[jsDay]}</span>
         <span class="daily-datenum">${date.getDate()} ${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}</span>
       </div>
-      <div class="daily-shifts">${shiftsHTML}</div>
-    `;
-
+      <div class="daily-shifts">${shiftsHTML}</div>`;
     dailyContainer.appendChild(item);
   });
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────────
+// ── Helpers
 function toDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }

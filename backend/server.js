@@ -20,13 +20,9 @@ let browser;
 
 app.post("/api/scrape", async (req, res) => {
   const { url, id } = req.body;
-
-  if (!url || !id) {
-    return res.status(400).json({ error: "Missing url or id" });
-  }
+  if (!url || !id) return res.status(400).json({ error: "Missing url or id" });
 
   let page;
-
   try {
     page = await browser.newPage();
     console.log("🌍 Loading page:", url);
@@ -37,7 +33,7 @@ app.post("/api/scrape", async (req, res) => {
     const result = await page.evaluate((employeeId) => {
       const rows = Array.from(document.querySelectorAll("tr"));
 
-      // ── Find employee row ────────────────────────────────────────────
+      // ── Find employee row
       let employeeRow = null;
       for (const tr of rows) {
         const firstCell = tr.querySelector("td");
@@ -46,10 +42,9 @@ app.post("/api/scrape", async (req, res) => {
         const match = txt.match(/^(\d+)\s+/);
         if (match && match[1] === employeeId) { employeeRow = tr; break; }
       }
-
       if (!employeeRow) return { error: "Employee not found" };
 
-      // ── Extract schedule ─────────────────────────────────────────────
+      // ── Extract schedule
       const cells = Array.from(employeeRow.querySelectorAll("td"));
       const schedule = [];
       for (const cell of cells) {
@@ -61,33 +56,47 @@ app.post("/api/scrape", async (req, res) => {
       }
       schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-      // ── Extract shift legend ────────────────────────────────────────────
-      // Legend rows: [full name:] [CODE] [optional times] [optional extra cells...]
-      // We only require at least 2 cells; name must end with ":"; code must be short.
+      // ── Extract legend (no cell count upper limit)
       const legend = {};
-
       for (const tr of rows) {
         const tds = Array.from(tr.querySelectorAll("td"));
         if (tds.length < 2) continue;
-
         const rawName = tds[0].innerText.trim();
         const code    = tds[1].innerText.trim();
-        // Times are in cell 2 if it exists (ignore any extra cells beyond that)
         const times   = tds.length >= 3 ? tds[2].innerText.trim() : "";
-
         if (!rawName.endsWith(":")) continue;
         if (code.length < 1 || code.length > 6) continue;
         if (!/^[A-ZÅÄÖa-zåäö0-9]+$/.test(code)) continue;
-
         const name = rawName.replace(/:$/, "").trim();
         if (!legend[code]) legend[code] = [];
         legend[code].push({ name, times });
       }
 
-      return { schedule, legend };
+      // ── Also return raw legend rows for debugging (charCodes of separator chars)
+      const debugLegend = {};
+      for (const [code, entries] of Object.entries(legend)) {
+        debugLegend[code] = entries.map(e => ({
+          name: e.name,
+          times: e.times,
+          // Show the char codes of the first 30 chars of times so we can see separators
+          timesCharCodes: [...e.times.substring(0, 60)].map(c => c.charCodeAt(0))
+        }));
+      }
+
+      return { schedule, legend, debugLegend };
     }, id);
 
     if (result.error) return res.status(404).json({ error: result.error });
+
+    // ── Log the full legend to the terminal so we can see the raw format
+    console.log("\n📊 LEGEND DUMP (raw times strings):");
+    for (const [code, entries] of Object.entries(result.legend)) {
+      for (const e of entries) {
+        console.log(`  [${code}] "${e.name}" | times: ${JSON.stringify(e.times)}`);
+      }
+    }
+    console.log("\n");
+
     res.json(result);
 
   } catch (err) {
@@ -98,6 +107,4 @@ app.post("/api/scrape", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on http://localhost:${PORT}`));
