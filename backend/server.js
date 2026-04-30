@@ -37,25 +37,21 @@ app.post("/api/scrape", async (req, res) => {
     const result = await page.evaluate((employeeId) => {
       const rows = Array.from(document.querySelectorAll("tr"));
 
-      // ── Find employee row ──────────────────────────────────────────────
+      // ── Find employee row ────────────────────────────────────────────
       let employeeRow = null;
       for (const tr of rows) {
         const firstCell = tr.querySelector("td");
         if (!firstCell) continue;
         const txt = firstCell.innerText.trim();
         const match = txt.match(/^(\d+)\s+/);
-        if (match && match[1] === employeeId) {
-          employeeRow = tr;
-          break;
-        }
+        if (match && match[1] === employeeId) { employeeRow = tr; break; }
       }
 
       if (!employeeRow) return { error: "Employee not found" };
 
-      // ── Extract schedule ───────────────────────────────────────────────
+      // ── Extract schedule ─────────────────────────────────────────────
       const cells = Array.from(employeeRow.querySelectorAll("td"));
       const schedule = [];
-
       for (const cell of cells) {
         const cellId = cell.getAttribute("id");
         if (!cellId || !cellId.includes("_")) continue;
@@ -63,22 +59,22 @@ app.post("/api/scrape", async (req, res) => {
         const shifts = cell.innerText.split("\n").map(s => s.trim()).filter(Boolean);
         if (shifts.length > 0) schedule.push({ date, shifts });
       }
-
       schedule.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-      // ── Extract shift legend from the bottom table ─────────────────────
-      // Legend rows have 2-3 cells: [full name:] [CODE] [optional times]
+      // ── Extract shift legend ────────────────────────────────────────────
+      // Legend rows: [full name:] [CODE] [optional times] [optional extra cells...]
+      // We only require at least 2 cells; name must end with ":"; code must be short.
       const legend = {};
 
       for (const tr of rows) {
         const tds = Array.from(tr.querySelectorAll("td"));
-        if (tds.length < 2 || tds.length > 3) continue;
+        if (tds.length < 2) continue;
 
         const rawName = tds[0].innerText.trim();
         const code    = tds[1].innerText.trim();
-        const times   = tds.length === 3 ? tds[2].innerText.trim() : "";
+        // Times are in cell 2 if it exists (ignore any extra cells beyond that)
+        const times   = tds.length >= 3 ? tds[2].innerText.trim() : "";
 
-        // Must look like a legend row: name ends with ":" and code is short
         if (!rawName.endsWith(":")) continue;
         if (code.length < 1 || code.length > 6) continue;
         if (!/^[A-ZÅÄÖa-zåäö0-9]+$/.test(code)) continue;
@@ -91,10 +87,7 @@ app.post("/api/scrape", async (req, res) => {
       return { schedule, legend };
     }, id);
 
-    if (result.error) {
-      return res.status(404).json({ error: result.error });
-    }
-
+    if (result.error) return res.status(404).json({ error: result.error });
     res.json(result);
 
   } catch (err) {
