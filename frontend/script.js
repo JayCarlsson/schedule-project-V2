@@ -7,8 +7,10 @@ const dailyContainer    = document.getElementById("daily");
 const calBtn            = document.getElementById("calBtn");
 const dayBtn            = document.getElementById("dayBtn");
 const tooltip           = document.getElementById("tooltip");
+const nextShiftBanner   = document.getElementById("next-shift-banner");
 
-let legendMap = {};
+let legendMap    = {};
+let countdownInterval = null;
 
 // ── Swedish day name → JS getDay() (0=Sun … 6=Sat) ──────────────────────────
 const SV_DAYS = {
@@ -32,7 +34,6 @@ function dayMatchesSpec(jsDay, spec) {
   return dayMatchesSingle(jsDay, s);
 }
 
-// ── Normalise a raw times string before splitting ────────────────────────────
 function normalizeTimesStr(s) {
   if (!s) return '';
   s = s.replace(/\s+och\s+/gi, ' & ');
@@ -53,9 +54,7 @@ function splitTimeParts(timesStr) {
     .filter(Boolean);
 }
 
-function cleanTime(t) {
-  return t.split(/\s+\(/)[0].trim();
-}
+function cleanTime(t) { return t.split(/\s+\(/)[0].trim(); }
 
 function matchTimeForDay(timesStr, jsDay) {
   const parts = splitTimeParts(timesStr);
@@ -67,10 +66,7 @@ function matchTimeForDay(timesStr, jsDay) {
     }
     const dayPart  = part.substring(0, ci).trim();
     const timePart = part.substring(ci + 1).trim();
-    if (/^\d/.test(dayPart)) {
-      // "30/5: 13.00-18.15" — specific date entry: return ONLY the time, no date prefix
-      return cleanTime(timePart);
-    }
+    if (/^\d/.test(dayPart)) return cleanTime(timePart); // specific date
     if (dayMatchesSpec(jsDay, dayPart)) return cleanTime(timePart);
   }
   return null;
@@ -93,6 +89,98 @@ function getShiftInfoForDay(code, jsDay) {
     if (time !== null) return { name: entry.name, time, labels: extractLabels(entry.times) };
   }
   return { name: entries[0].name, time: '', labels: extractLabels(entries[0].times) };
+}
+
+// ── Next shift banner ─────────────────────────────────────────────────────────
+function parseShiftStartTime(timeStr) {
+  // Extract start time from "23.00-05.15" or "23:00-05:15"
+  if (!timeStr) return null;
+  const m = timeStr.match(/(\d{1,2})[.:](\d{2})/);
+  return m ? { h: parseInt(m[1],10), min: parseInt(m[2],10) } : null;
+}
+
+function renderNextShiftBanner(schedule) {
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+
+  const now   = new Date();
+  const today = new Date(now); today.setHours(0,0,0,0);
+
+  // Find the next shift that hasn't started yet (or is today)
+  let nextEntry = null, nextShiftCode = null, nextShiftTime = null, nextDate = null;
+
+  for (const entry of schedule) {
+    const d = new Date(entry.date);
+    if (d < today) continue;
+    const jsDay = d.getDay();
+    // Skip X-only days
+    const realShifts = entry.shifts.filter(s => s.toUpperCase() !== 'X');
+    if (realShifts.length === 0) continue;
+
+    for (const code of realShifts) {
+      const info = getShiftInfoForDay(code, jsDay);
+      const start = info ? parseShiftStartTime(info.time) : null;
+
+      // Build a Date for when this shift starts
+      let shiftStart = new Date(d);
+      if (start) {
+        shiftStart.setHours(start.h, start.min, 0, 0);
+        // Night shifts starting before 12:00 actually start next calendar day
+        if (start.h < 12) shiftStart.setDate(shiftStart.getDate() + 1);
+      } else {
+        shiftStart.setHours(20, 0, 0, 0); // fallback: 20:00
+      }
+
+      if (shiftStart > now) {
+        nextEntry     = entry;
+        nextShiftCode = code;
+        nextShiftTime = info ? info.time : '';
+        nextDate      = shiftStart;
+        break;
+      }
+    }
+    if (nextEntry) break;
+  }
+
+  if (!nextEntry) { nextShiftBanner.classList.add('hidden'); return; }
+
+  const jsDay   = new Date(nextEntry.date).getDay();
+  const info    = getShiftInfoForDay(nextShiftCode, jsDay);
+  const isToday = new Date(nextEntry.date).setHours(0,0,0,0) === today.getTime();
+
+  nextShiftBanner.className = 'next-shift-banner' + (isToday ? ' nsb-today' : '');
+
+  function updateBanner() {
+    const diff = nextDate - new Date();
+    if (diff <= 0) { renderNextShiftBanner(schedule); return; }
+    const days  = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    const mins  = Math.floor((diff % 3600000)  / 60000);
+    let countdown;
+    if (days > 0)       countdown = `${days}d ${hours}h`;
+    else if (hours > 0) countdown = `${hours}h ${mins}m`;
+    else                countdown = `${mins}m`;
+
+    const dateLabel = isToday ? 'Today' :
+      nextDate.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+
+    nextShiftBanner.innerHTML = `
+      <div class="nsb-icon">${isToday ? '⏰' : '📅'}</div>
+      <div class="nsb-body">
+        <div class="nsb-label">${isToday ? 'Shift today' : 'Next shift'}</div>
+        <div class="nsb-venue">${info ? info.name : nextShiftCode}
+          <span style="font-size:.75rem;font-weight:400;color:var(--text-muted);">&nbsp;${nextShiftCode}</span>
+        </div>
+        <div class="nsb-detail">${dateLabel}${nextShiftTime ? ' &middot; ' + nextShiftTime : ''}</div>
+      </div>
+      <div class="nsb-countdown">
+        <div class="nsb-countdown-value">${countdown}</div>
+        <div class="nsb-countdown-label">until start</div>
+      </div>`;
+  }
+
+  updateBanner();
+  nextShiftBanner.classList.remove('hidden');
+  countdownInterval = setInterval(updateBanner, 30000); // refresh every 30s
 }
 
 // ── Tooltip HTML ─────────────────────────────────────────────────────────────
@@ -130,6 +218,7 @@ loadBtn.addEventListener('click', async () => {
   hideError();
   loading.classList.remove('hidden');
   scheduleSection.classList.add('hidden');
+  nextShiftBanner.classList.add('hidden');
   calendarContainer.innerHTML = ''; dailyContainer.innerHTML = '';
   try {
     const res  = await fetch('http://localhost:3000/api/scrape', {
@@ -141,6 +230,7 @@ loadBtn.addEventListener('click', async () => {
     legendMap = data.legend || {};
     renderCalendar(data.schedule);
     renderDaily(data.schedule);
+    renderNextShiftBanner(data.schedule);
     scheduleSection.classList.remove('hidden');
   } catch (err) {
     showError('Could not load schedule: ' + err.message);
