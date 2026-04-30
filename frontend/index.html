@@ -1,27 +1,64 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Schedule Viewer</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app">
-  <h1>Schedule Viewer</h1>
-  <input id="url" placeholder="Schedule URL">
-  <input id="id" placeholder="Employee ID">
-  <div class="toggle">
-    <button id="calBtn" class="active">Calendar</button>
-    <button id="dayBtn">Daily</button>
-  </div>
-  <button id="loadBtn">Load Schedule</button>
-  <div id="loading" class="hidden">Loading...</div>
-  <div id="calendar" class="calendar"></div>
-  <div id="daily" class="daily hidden"></div>
-<!-- Tooltip container -->
-<div id="tooltip"></div>
 
-<!-- Your existing script include -->
+  <header class="app-header">
+    <div class="logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-label="Schedule Viewer" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="4" width="24" height="22" rx="3" stroke="currentColor" stroke-width="2"/>
+        <path d="M9 2v4M19 2v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M2 10h24" stroke="currentColor" stroke-width="2"/>
+        <rect x="7" y="15" width="4" height="4" rx="1" fill="currentColor"/>
+        <rect x="13" y="15" width="4" height="4" rx="1" fill="currentColor"/>
+        <rect x="7" y="21" width="4" height="3" rx="1" fill="currentColor"/>
+      </svg>
+      <span>Schedule Viewer</span>
+    </div>
+  </header>
+
+  <section class="controls">
+    <div class="input-group">
+      <label for="url">Schedule URL</label>
+      <input id="url" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
+    </div>
+    <div class="input-group">
+      <label for="id">Employee ID</label>
+      <input id="id" type="text" placeholder="e.g. 12345">
+    </div>
+    <button id="loadBtn" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Load Schedule
+    </button>
+  </section>
+
+  <div id="loading" class="loading hidden">
+    <div class="spinner"></div>
+    <span>Fetching your schedule&hellip;</span>
+  </div>
+
+  <div id="error-msg" class="error-msg hidden"></div>
+
+  <div id="schedule-section" class="hidden">
+    <div class="view-toggle">
+      <button id="calBtn" class="toggle-btn active" aria-pressed="true">Calendar</button>
+      <button id="dayBtn" class="toggle-btn" aria-pressed="false">Daily List</button>
+    </div>
+
+    <div id="calendar" class="calendar-wrapper"></div>
+    <div id="daily" class="daily-wrapper hidden"></div>
+  </div>
+
+</div>
+
+<div id="tooltip" role="tooltip"></div>
+
 <script src="script.js"></script>
 </body>
 </html>
