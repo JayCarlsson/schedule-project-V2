@@ -1,16 +1,118 @@
-const loadBtn          = document.getElementById("loadBtn");
-const loading          = document.getElementById("loading");
-const errorMsg         = document.getElementById("error-msg");
-const scheduleSection  = document.getElementById("schedule-section");
+const loadBtn           = document.getElementById("loadBtn");
+const loading           = document.getElementById("loading");
+const errorMsg          = document.getElementById("error-msg");
+const scheduleSection   = document.getElementById("schedule-section");
 const calendarContainer = document.getElementById("calendar");
-const dailyContainer   = document.getElementById("daily");
-const calBtn           = document.getElementById("calBtn");
-const dayBtn           = document.getElementById("dayBtn");
-const tooltip          = document.getElementById("tooltip");
+const dailyContainer    = document.getElementById("daily");
+const calBtn            = document.getElementById("calBtn");
+const dayBtn            = document.getElementById("dayBtn");
+const tooltip           = document.getElementById("tooltip");
 
-let legendMap = {}; // code → [{ name, times }]
+let legendMap = {};
 
-// ── View toggle ─────────────────────────────────────────────────────────────
+// ── Swedish day name → JS getDay() (0=Sun, 1=Mon … 6=Sat) ─────────────────────
+const SV_DAYS = {
+  'Sön': 0, 'Son': 0,
+  'Mån': 1, 'Man': 1,
+  'Tis': 2,
+  'Ons': 3,
+  'Tor': 4, 'Tors': 4,
+  'Fre': 5,
+  'Lör': 6, 'Lor': 6
+};
+
+// ── Day-of-week matching ────────────────────────────────────────────────────────
+function dayMatchesSingle(jsDay, name) {
+  return SV_DAYS[name.trim()] === jsDay;
+}
+
+function dayMatchesSpec(jsDay, spec) {
+  spec = spec.trim();
+
+  // List: "Fre & Lör"
+  if (spec.includes('&')) {
+    return spec.split('&').some(p => dayMatchesSingle(jsDay, p));
+  }
+
+  // Range: "Sön-Tors"
+  if (spec.includes('-')) {
+    const parts = spec.split('-');
+    const s = SV_DAYS[parts[0].trim()];
+    const e = SV_DAYS[parts[1].trim()];
+    if (s === undefined || e === undefined) return false;
+    if (s <= e) return jsDay >= s && jsDay <= e;
+    // Wrap-around (e.g. Tor-Sön = 4,5,6,0)
+    return jsDay >= s || jsDay <= e;
+  }
+
+  // Single day
+  return dayMatchesSingle(jsDay, spec);
+}
+
+// Given a legend times string like "Sön-Tors: 18.00-23.00 ll Fre & Lör: 18.00-02.00"
+// and a JS day number, return only the time that applies to that day.
+function matchTimeForDay(timesStr, jsDay) {
+  if (!timesStr) return null;
+
+  const parts = timesStr.split(/\s*ll\s*/).map(p => p.trim()).filter(Boolean);
+
+  for (const part of parts) {
+    const colonIdx = part.indexOf(':');
+
+    // No colon — plain time, matches all days
+    if (colonIdx === -1) return part;
+
+    const dayPart  = part.substring(0, colonIdx).trim();
+    const timePart = part.substring(colonIdx + 1).trim();
+
+    // If dayPart starts with a digit it IS a time already (e.g. "23.00-05.15")
+    if (/^\d/.test(dayPart)) return part;
+
+    if (dayMatchesSpec(jsDay, dayPart)) return timePart;
+  }
+
+  return null; // This code doesn’t work on the given day
+}
+
+// Find the best legend entry + matched time for a code on a given day.
+function getShiftInfoForDay(code, jsDay) {
+  const entries = legendMap[code];
+  if (!entries || entries.length === 0) return null;
+
+  // Try each entry — return the first whose times match this day
+  for (const entry of entries) {
+    const time = matchTimeForDay(entry.times, jsDay);
+    if (time !== null) return { name: entry.name, time };
+  }
+
+  // No day-specific match: fall back to the first entry’s raw times
+  return { name: entries[0].name, time: entries[0].times || '' };
+}
+
+// ── Build tooltip HTML for one shift code ───────────────────────────────────────
+function buildShiftHTML(code, jsDay) {
+  if (code.toUpperCase() === 'X') {
+    return `<div class="tt-entry tt-leave-entry">
+      <span class="tt-leave-label">Beviljad ledighet</span>
+    </div>`;
+  }
+
+  if (!legendMap[code]) {
+    return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
+  }
+
+  const info = getShiftInfoForDay(code, jsDay);
+  if (!info) {
+    return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
+  }
+
+  return `<div class="tt-entry">
+    <div class="tt-name">${info.name} <span class="tt-code-tag">${code}</span></div>
+    ${info.time ? `<div class="tt-time">${info.time}</div>` : ''}
+  </div>`;
+}
+
+// ── View toggle ────────────────────────────────────────────────────────────────
 calBtn.addEventListener("click", () => switchView("calendar"));
 dayBtn.addEventListener("click", () => switchView("daily"));
 
@@ -52,13 +154,9 @@ loadBtn.addEventListener("click", async () => {
     });
 
     const data = await response.json();
-
-    if (!response.ok || data.error) {
-      throw new Error(data.error || "Server returned an error.");
-    }
+    if (!response.ok || data.error) throw new Error(data.error || "Server error.");
 
     legendMap = data.legend || {};
-
     renderCalendar(data.schedule);
     renderDaily(data.schedule);
     scheduleSection.classList.remove("hidden");
@@ -70,37 +168,14 @@ loadBtn.addEventListener("click", async () => {
   }
 });
 
-// ── Build rich tooltip HTML for a shift code ─────────────────────────────────
-function buildShiftHTML(code) {
-  const entries = legendMap[code];
-
-  if (!entries || entries.length === 0) {
-    // Unknown code — just show the raw value
-    return `<div class="tt-entry">
-      <div class="tt-code-unknown">${code}</div>
-    </div>`;
-  }
-
-  return entries.map(entry => {
-    const timeParts = entry.times
-      ? entry.times.split(/\s*ll\s*/).map(t => t.trim()).filter(Boolean)
-      : [];
-
-    return `<div class="tt-entry">
-      <div class="tt-name">${entry.name} <span class="tt-code-tag">${code}</span></div>
-      ${timeParts.map(t => `<div class="tt-time">${t}</div>`).join("")}
-    </div>`;
-  }).join('<div class="tt-sep"></div>');
-}
-
-// ── Calendar view ─────────────────────────────────────────────────────────────
+// ── Calendar view ────────────────────────────────────────────────────────────────
 const MONTH_NAMES = ["January","February","March","April","May","June",
                      "July","August","September","October","November","December"];
 const DAY_NAMES   = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
 function renderCalendar(schedule) {
   if (!schedule || schedule.length === 0) {
-    calendarContainer.innerHTML = "<p class='empty-state'>No shifts found for this employee.</p>";
+    calendarContainer.innerHTML = "<p class='empty-state'>No shifts found.</p>";
     return;
   }
 
@@ -118,9 +193,9 @@ function renderCalendar(schedule) {
   today.setHours(0, 0, 0, 0);
 
   Object.values(monthGroups).forEach(({ year, month }) => {
-    const firstDay   = new Date(year, month, 1);
-    const lastDay    = new Date(year, month + 1, 0);
-    const jsFirstDay = firstDay.getDay();
+    const firstDay    = new Date(year, month, 1);
+    const lastDay     = new Date(year, month + 1, 0);
+    const jsFirstDay  = firstDay.getDay();
     const startOffset = jsFirstDay === 0 ? 6 : jsFirstDay - 1;
 
     const monthHeader = document.createElement("div");
@@ -131,9 +206,7 @@ function renderCalendar(schedule) {
     const nameRow = document.createElement("div");
     nameRow.className = "cal-day-names";
     DAY_NAMES.forEach(n => {
-      const s = document.createElement("span");
-      s.textContent = n;
-      nameRow.appendChild(s);
+      const s = document.createElement("span"); s.textContent = n; nameRow.appendChild(s);
     });
     calendarContainer.appendChild(nameRow);
 
@@ -141,45 +214,48 @@ function renderCalendar(schedule) {
     grid.className = "cal-grid";
 
     for (let i = 0; i < startOffset; i++) {
-      const empty = document.createElement("div");
-      empty.className = "cal-cell empty";
-      grid.appendChild(empty);
+      const e = document.createElement("div"); e.className = "cal-cell empty"; grid.appendChild(e);
     }
 
     for (let d = 1; d <= lastDay.getDate(); d++) {
       const dateObj  = new Date(year, month, d);
       const dateStr  = toDateStr(dateObj);
+      const jsDay    = dateObj.getDay();
       const shifts   = shiftMap[dateStr];
       const isToday  = dateObj.getTime() === today.getTime();
-      const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+      const isWeekend = jsDay === 0 || jsDay === 6;
+
+      // Classify the day
+      const isXOnly     = shifts && shifts.length === 1 && shifts[0].toUpperCase() === 'X';
+      const hasAnyShift = shifts && shifts.length > 0;
 
       const cell = document.createElement("div");
       cell.className = "cal-cell" +
-        (shifts    ? " has-shift" : "") +
-        (isToday   ? " today"     : "") +
-        (isWeekend ? " weekend"   : "");
+        (isXOnly      ? " leave"    :
+         hasAnyShift  ? " has-shift" : "") +
+        (isToday   ? " today"   : "") +
+        (isWeekend ? " weekend" : "");
 
       const num = document.createElement("span");
       num.className = "cal-num";
       num.textContent = d;
       cell.appendChild(num);
 
-      if (shifts && shifts.length > 0) {
-        // Show badges inside the cell
+      if (hasAnyShift) {
         shifts.forEach(s => {
           const badge = document.createElement("span");
-          badge.className = "cal-badge";
+          badge.className = "cal-badge" + (isXOnly ? " leave-badge" : "");
           badge.textContent = s;
           cell.appendChild(badge);
         });
 
-        // Rich tooltip on hover
-        cell.addEventListener("mouseenter", (e) => {
-          const inner = shifts.map(s => buildShiftHTML(s)).join('<div class="tt-shift-sep"></div>');
-          tooltip.innerHTML =
-            `<div class="tt-header">${dateStr}</div>` + inner;
+        cell.addEventListener("mouseenter", (ev) => {
+          const inner = shifts
+            .map(s => buildShiftHTML(s, jsDay))
+            .join('<div class="tt-shift-sep"></div>');
+          tooltip.innerHTML = `<div class="tt-header">${dateStr}</div>` + inner;
           tooltip.classList.add("show");
-          moveTooltip(e);
+          moveTooltip(ev);
         });
         cell.addEventListener("mousemove", moveTooltip);
         cell.addEventListener("mouseleave", () => tooltip.classList.remove("show"));
@@ -202,7 +278,7 @@ function moveTooltip(e) {
   tooltip.style.top  = (y + th > window.innerHeight ? e.clientY - th - pad : y) + "px";
 }
 
-// ── Daily list view ───────────────────────────────────────────────────────────
+// ── Daily list view ────────────────────────────────────────────────────────────
 const FULL_DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 function renderDaily(schedule) {
@@ -216,35 +292,38 @@ function renderDaily(schedule) {
 
   schedule.forEach(entry => {
     const date    = new Date(entry.date);
+    const jsDay   = date.getDay();
     const isToday = date.getTime() === today.getTime();
+    const isXOnly = entry.shifts.length === 1 && entry.shifts[0].toUpperCase() === 'X';
 
     const item = document.createElement("div");
-    item.className = "daily-item" + (isToday ? " today" : "");
+    item.className = "daily-item" +
+      (isXOnly  ? " leave" : "") +
+      (isToday  ? " today" : "");
 
     const shiftsHTML = entry.shifts.map(code => {
-      const entries = legendMap[code];
-      if (!entries || entries.length === 0) {
+      if (code.toUpperCase() === 'X') {
         return `<div class="daily-shift-row">
-          <span class="badge">${code}</span>
+          <span class="badge leave-badge">X</span>
+          <span class="daily-shift-name daily-leave-label">Beviljad ledighet</span>
         </div>`;
       }
-      return entries.map(e => {
-        const timeParts = e.times
-          ? e.times.split(/\s*ll\s*/).map(t => t.trim()).filter(Boolean)
-          : [];
-        return `<div class="daily-shift-row">
-          <span class="badge">${code}</span>
-          <span class="daily-shift-name">${e.name}</span>
-          ${timeParts.length > 0
-            ? `<span class="daily-shift-time">${timeParts[0]}${timeParts.length > 1 ? ` <span class="daily-shift-more">+${timeParts.length - 1} more</span>` : ""}</span>`
-            : ""}
-        </div>`;
-      }).join("");
+
+      const info = getShiftInfoForDay(code, jsDay);
+      if (!info) {
+        return `<div class="daily-shift-row"><span class="badge">${code}</span></div>`;
+      }
+
+      return `<div class="daily-shift-row">
+        <span class="badge">${code}</span>
+        <span class="daily-shift-name">${info.name}</span>
+        ${info.time ? `<span class="daily-shift-time">${info.time}</span>` : ''}
+      </div>`;
     }).join("");
 
     item.innerHTML = `
       <div class="daily-date">
-        <span class="daily-weekday">${FULL_DAYS[date.getDay()]}</span>
+        <span class="daily-weekday">${FULL_DAYS[jsDay]}</span>
         <span class="daily-datenum">${date.getDate()} ${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}</span>
       </div>
       <div class="daily-shifts">${shiftsHTML}</div>
@@ -254,20 +333,12 @@ function renderDaily(schedule) {
   });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────────
 function toDateStr(d) {
   const y  = d.getFullYear();
   const m  = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
-
-function showError(msg) {
-  errorMsg.textContent = msg;
-  errorMsg.classList.remove("hidden");
-}
-
-function hideError() {
-  errorMsg.classList.add("hidden");
-  errorMsg.textContent = "";
-}
+function showError(msg) { errorMsg.textContent = msg; errorMsg.classList.remove("hidden"); }
+function hideError()    { errorMsg.classList.add("hidden"); errorMsg.textContent = ""; }
