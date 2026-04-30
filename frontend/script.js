@@ -8,9 +8,38 @@ const calBtn            = document.getElementById("calBtn");
 const dayBtn            = document.getElementById("dayBtn");
 const tooltip           = document.getElementById("tooltip");
 const nextShiftBanner   = document.getElementById("next-shift-banner");
+const urlInput          = document.getElementById("url");
+const idInput           = document.getElementById("id");
 
-let legendMap    = {};
+let legendMap         = {};
 let countdownInterval = null;
+
+// ── Persist inputs in URL hash so they survive page reloads ──────────────────
+function saveInputs() {
+  const url = urlInput.value.trim();
+  const id  = idInput.value.trim();
+  if (url || id) {
+    const encoded = btoa(JSON.stringify({ url, id }));
+    history.replaceState(null, '', '#' + encoded);
+  }
+}
+
+function restoreInputs() {
+  const hash = location.hash.slice(1);
+  if (!hash) return;
+  try {
+    const { url, id } = JSON.parse(atob(hash));
+    if (url) urlInput.value = url;
+    if (id)  idInput.value  = id;
+  } catch { /* ignore corrupt hash */ }
+}
+
+// Restore on load
+restoreInputs();
+
+// Save whenever the user changes either field
+urlInput.addEventListener('input', saveInputs);
+idInput.addEventListener('input',  saveInputs);
 
 // ── Swedish day name → JS getDay() (0=Sun … 6=Sat) ──────────────────────────
 const SV_DAYS = {
@@ -93,7 +122,6 @@ function getShiftInfoForDay(code, jsDay) {
 
 // ── Next shift banner ─────────────────────────────────────────────────────────
 function parseShiftStartTime(timeStr) {
-  // Extract start time from "23.00-05.15" or "23:00-05:15"
   if (!timeStr) return null;
   const m = timeStr.match(/(\d{1,2})[.:](\d{2})/);
   return m ? { h: parseInt(m[1],10), min: parseInt(m[2],10) } : null;
@@ -105,14 +133,12 @@ function renderNextShiftBanner(schedule) {
   const now   = new Date();
   const today = new Date(now); today.setHours(0,0,0,0);
 
-  // Find the next shift that hasn't started yet (or is today)
   let nextEntry = null, nextShiftCode = null, nextShiftTime = null, nextDate = null;
 
   for (const entry of schedule) {
     const d = new Date(entry.date);
     if (d < today) continue;
     const jsDay = d.getDay();
-    // Skip X-only days
     const realShifts = entry.shifts.filter(s => s.toUpperCase() !== 'X');
     if (realShifts.length === 0) continue;
 
@@ -120,14 +146,12 @@ function renderNextShiftBanner(schedule) {
       const info = getShiftInfoForDay(code, jsDay);
       const start = info ? parseShiftStartTime(info.time) : null;
 
-      // Build a Date for when this shift starts
       let shiftStart = new Date(d);
       if (start) {
         shiftStart.setHours(start.h, start.min, 0, 0);
-        // Night shifts starting before 12:00 actually start next calendar day
         if (start.h < 12) shiftStart.setDate(shiftStart.getDate() + 1);
       } else {
-        shiftStart.setHours(20, 0, 0, 0); // fallback: 20:00
+        shiftStart.setHours(20, 0, 0, 0);
       }
 
       if (shiftStart > now) {
@@ -180,7 +204,7 @@ function renderNextShiftBanner(schedule) {
 
   updateBanner();
   nextShiftBanner.classList.remove('hidden');
-  countdownInterval = setInterval(updateBanner, 30000); // refresh every 30s
+  countdownInterval = setInterval(updateBanner, 30000);
 }
 
 // ── Tooltip HTML ─────────────────────────────────────────────────────────────
@@ -212,9 +236,10 @@ function switchView(view) {
 
 // ── Load schedule ─────────────────────────────────────────────────────────────
 loadBtn.addEventListener('click', async () => {
-  const url = document.getElementById('url').value.trim();
-  const id  = document.getElementById('id').value.trim();
+  const url = urlInput.value.trim();
+  const id  = idInput.value.trim();
   if (!url || !id) { showError('Please enter both a schedule URL and your Employee ID.'); return; }
+  saveInputs();
   hideError();
   loading.classList.remove('hidden');
   scheduleSection.classList.add('hidden');
