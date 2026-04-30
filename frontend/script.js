@@ -33,16 +33,10 @@ function dayMatchesSpec(jsDay, spec) {
 }
 
 // ── Normalise a raw times string before splitting ────────────────────────────
-// Handles the messy formats Cherry uses in the legend.
 function normalizeTimesStr(s) {
   if (!s) return '';
-  // 1. "och" → "&"
   s = s.replace(/\s+och\s+/gi, ' & ');
-  // 2. "& DayName digit" (different time per day, no colon) → "ll DayName: digit"
-  //    e.g. "Fre: 23.00 & Lör 23.00" → "Fre: 23.00 ll Lör: 23.00"
   s = s.replace(/&\s*([A-ZÅÄÖ][a-zåäö]{1,5})\s+(\d)/g, ' ll $1: $2');
-  // 3. "DaySpec digit" (shared or single, no colon) → "DaySpec: digit"
-  //    e.g. "Vardagar 22.00", "Fre & Lör 21.00"
   const DW = '(?:Vardagar?|Helg(?:dag)?|S[oö]n|M[åa]n|Tis|Ons|Tors?|Fre|L[oö]r)';
   const DL = `(${DW}(?:\\s*&\\s*${DW})*)`;
   s = s.replace(new RegExp(`${DL}\\s+(\\d{1,2}[.:])`,'gi'), '$1: $2');
@@ -59,39 +53,34 @@ function splitTimeParts(timesStr) {
     .filter(Boolean);
 }
 
-// Extracts only the time token(s) from the start of a timePart string,
-// stripping trailing notes like "(kan ha öppet till 04)".
 function cleanTime(t) {
   return t.split(/\s+\(/)[0].trim();
 }
 
-// Returns the matched time string for a given JS day, or null.
 function matchTimeForDay(timesStr, jsDay) {
   const parts = splitTimeParts(timesStr);
   for (const part of parts) {
     const ci = part.indexOf(':');
     if (ci === -1) {
-      // No colon: only valid if starts with a digit (plain time, any day)
       if (/^\d/.test(part)) return cleanTime(part);
-      continue; // skip labels like "Roulette", "Kontanter"
+      continue;
     }
     const dayPart  = part.substring(0, ci).trim();
     const timePart = part.substring(ci + 1).trim();
     if (/^\d/.test(dayPart)) {
-      // "30/5: 13.00-18.15" — specific date; show for any day
-      return `${dayPart}: ${cleanTime(timePart)}`;
+      // "30/5: 13.00-18.15" — specific date entry: return ONLY the time, no date prefix
+      return cleanTime(timePart);
     }
     if (dayMatchesSpec(jsDay, dayPart)) return cleanTime(timePart);
   }
   return null;
 }
 
-// Game-type labels to surface in the tooltip (Roulette, Kontanter, BJ…)
 const GAME_RE = /^(roulette|kontanter|bj|blackjack|poker)/i;
 function extractLabels(timesStr) {
   return splitTimeParts(timesStr).filter(p => {
-    if (p.indexOf(':') !== -1) return false; // has colon → not a plain label
-    if (/^\d/.test(p))         return false; // starts with digit → time
+    if (p.indexOf(':') !== -1) return false;
+    if (/^\d/.test(p))         return false;
     return GAME_RE.test(p);
   });
 }
@@ -103,7 +92,6 @@ function getShiftInfoForDay(code, jsDay) {
     const time = matchTimeForDay(entry.times, jsDay);
     if (time !== null) return { name: entry.name, time, labels: extractLabels(entry.times) };
   }
-  // Fallback: show name + any labels, no time
   return { name: entries[0].name, time: '', labels: extractLabels(entries[0].times) };
 }
 
@@ -117,7 +105,7 @@ function buildShiftHTML(code, jsDay) {
   if (!info) return `<div class="tt-entry"><div class="tt-code-unknown">${code}</div></div>`;
   const labelsHTML = info.labels.map(l => `<span class="tt-label-tag">${l}</span>`).join('');
   return `<div class="tt-entry">
-    <div class="tt-name">${info.name} <span class="tt-code-tag">${code}</span></div>
+    <div class="tt-name">${info.name} <span class="tt-code-tag">${code}</span></div>
     ${labelsHTML ? `<div class="tt-labels">${labelsHTML}</div>` : ''}
     ${info.time ? `<div class="tt-time">${info.time}</div>` : ''}
   </div>`;
